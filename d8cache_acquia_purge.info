@@ -1,0 +1,8 @@
+name = D8Cache Acquia Purge
+description = Provides support for cache tag clearing.
+package = Performance and scalability
+version = "7.x-1.0"
+core = "7.x"
+
+dependencies[] = acquia_purge
+dependencies[] = d8cache

@@ -1,0 +1,90 @@
+<?php
+/**
+ * @file
+ * d8cache_acquia_purge.module
+ */
+
+/**
+ * Implements hook_emit_cache_tags().
+ */
+function d8cache_acquia_purge_emit_cache_tags($tags) {
+  drupal_add_http_header('X-Acquia-Site', _acquia_purge_service()->hostingInfo()->getBalancerToken());
+  drupal_add_http_header('X-Acquia-Purge-Tags', implode(' ', _d8cache_acquia_purge_hash_tags($tags)));
+}
+
+/**
+ * Implements hook_invalidate_cache_tags().
+ */
+function d8cache_acquia_purge_invalidate_cache_tags($tags) {
+  $service = _acquia_purge_service();
+  $requests = array();
+
+  $executor = new AcquiaPurgeExecutorAcquia($service);
+
+  $hosting_info = $service->hostingInfo();
+  $balancer_token = $hosting_info->getBalancerToken();
+
+  $hashed_tags = _d8cache_acquia_purge_hash_tags($tags);
+  $hashed_tags = implode(' ', $hashed_tags);
+
+  foreach ($hosting_info->getDomains() as $domain) {
+    foreach ($hosting_info->getBalancerAddresses() as $balancer_ip) {
+      /** @var \AcquiaPurgeExecutorRequest $r */
+      $r = $executor->getRequest();
+      $r->_balancer_ip = $balancer_ip;
+      $r->_host = $domain;
+      $r->scheme = 'http';
+      $r->path = '/tags';
+      $r->uri = $r->scheme . '://' . $r->_balancer_ip . $r->path;
+      $r->method = 'BAN';
+      $r->headers = [
+        'X-Acquia-Purge: ' . $balancer_token,
+        'X-Acquia-Purge-Tags: ' . $hashed_tags,
+        'Accept-Encoding: gzip',
+        'User-Agent: Acquia Purge',
+      ];
+      $requests[] = $r;
+    }
+  }
+
+  $executor->requestsExecute($requests, TRUE);
+
+  foreach ($requests as $request) {
+    $request->result = FALSE;
+    if (in_array($request->response_code, array(404, 200))) {
+      $request->result = TRUE;
+    }
+  }
+  
+  $executor->requestsLog($requests);
+}
+
+/**
+ * Returns an array of tag hashes.
+ *
+ * @param array $tags
+ *   The original tag set.
+ *
+ * @return array
+ *   The hashed tag set.
+ */
+function _d8cache_acquia_purge_hash_tags(array $tags) {
+  $hashed = array();
+  foreach ($tags as $tag) {
+    $hashed[] = _d8cache_acquia_purge_hash_tag($tag);
+  }
+  return $hashed;
+}
+
+/**
+ * Hashes a single cache tag using MD5 and returns shortened 4 char string.
+ *
+ * @param string $tag
+ *   The non-hashed tag (e.g. node:1).
+ *
+ * @return string
+ *   The hashed tag.
+ */
+function _d8cache_acquia_purge_hash_tag($tag) {
+  return substr(hash('md5', $tag), 0, 4);
+}
